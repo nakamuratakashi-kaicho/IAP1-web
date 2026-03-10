@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ラジオ番組ダウンローダー Web版</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="logo-section">
+            <img src="https://honmaru-radio.com/design/img/sitename01.png" alt="ホンマルラジオ">
+        </div>
+        <h1>ラジオ番組ダウンローダー</h1>
+        <p class="subtitle">ホンマルラジオの番組をWAV・MP3形式でダウンロード（Web版）</p>
+
+        <div class="input-section">
+            <label>出力形式:</label>
+            <div class="format-checkboxes">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="format-wav" checked>
+                    WAV
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="format-mp3">
+                    MP3
+                </label>
+            </div>
+
+            <label for="url-input" style="margin-top: 16px;">番組カテゴリURL:</label>
+            <input type="url" id="url-input"
+                   value=""
+                   placeholder="https://honmaru-radio.com/category/番組名/">
+            <button id="start-btn" onclick="startProcess()">実行</button>
+        </div>
+
+        <div id="progress-section" class="progress-section hidden">
+            <h2>処理状況</h2>
+            <div class="progress-bar-container">
+                <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+            </div>
+            <p id="progress-text" class="progress-text"></p>
+        </div>
+
+        <div id="results-section" class="results-section hidden">
+            <h2>結果</h2>
+            <button id="download-all-btn" class="download-all-btn hidden" onclick="downloadAll()">
+                全ファイルをZIPでダウンロード
+            </button>
+            <table id="results-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>ファイル名</th>
+                        <th>状態</th>
+                        <th>ダウンロード</th>
+                    </tr>
+                </thead>
+                <tbody id="results-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let pollInterval = null;
+
+        function startProcess() {
+            const url = document.getElementById('url-input').value.trim();
+            if (!url) {
+                alert('URLを入力してください');
+                return;
+            }
+
+            const formats = [];
+            if (document.getElementById('format-wav').checked) formats.push('wav');
+            if (document.getElementById('format-mp3').checked) formats.push('mp3');
+            if (formats.length === 0) {
+                alert('出力形式を1つ以上選択してください');
+                return;
+            }
+
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('progress-section').classList.remove('hidden');
+            document.getElementById('results-section').classList.remove('hidden');
+            document.getElementById('results-body').innerHTML = '';
+            document.getElementById('download-all-btn').classList.add('hidden');
+
+            fetch('/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url, formats: formats })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                    document.getElementById('start-btn').disabled = false;
+                    return;
+                }
+                pollInterval = setInterval(pollStatus, 1000);
+            })
+            .catch(err => {
+                alert('エラーが発生しました: ' + err.message);
+                document.getElementById('start-btn').disabled = false;
+            });
+        }
+
+        function pollStatus() {
+            fetch('/status')
+            .then(res => res.json())
+            .then(state => {
+                const percent = state.total > 0 ? (state.current / state.total * 100) : 0;
+                document.getElementById('progress-bar').style.width = percent + '%';
+                document.getElementById('progress-text').textContent = state.status_message;
+
+                updateResultsTable(state.results);
+
+                if (state.completed || state.error) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    document.getElementById('start-btn').disabled = false;
+
+                    if (state.results.some(r => r.status === 'success')) {
+                        document.getElementById('download-all-btn').classList.remove('hidden');
+                    }
+                }
+            });
+        }
+
+        function updateResultsTable(results) {
+            const tbody = document.getElementById('results-body');
+            tbody.innerHTML = '';
+
+            results.forEach((r, i) => {
+                if (r.status === 'success') {
+                    const filenames = r.filenames || [r.filename];
+                    filenames.forEach((fname, j) => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${j === 0 ? i + 1 : ''}</td>
+                            <td>${fname}</td>
+                            <td class="status-success">完了</td>
+                            <td><a href="/download/${encodeURIComponent(fname)}" class="dl-link">ダウンロード</a></td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                } else {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${i + 1}</td>
+                        <td>${r.episode_url || '-'}</td>
+                        <td class="status-error">エラー: ${r.error}</td>
+                        <td>-</td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+            });
+        }
+
+        function downloadAll() {
+            window.location.href = '/download-all';
+        }
+    </script>
+</body>
+</html>
